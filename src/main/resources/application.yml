@@ -1,0 +1,12 @@
+spring:
+  application:
+    name: learning-service
+  profiles:
+    active: local
+server:
+  port: 8085
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
