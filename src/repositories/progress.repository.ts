@@ -1,4 +1,4 @@
-import { UpdateCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { UpdateCommand, QueryCommand, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { docClient, tableName } from '../config/dynamodb.config';
 import { LessonProgressDto } from '../dtos/lesson-progress.dto';
 
@@ -56,7 +56,13 @@ export class ProgressRepository {
     const response = await docClient.send(command);
     const items = response.Items || [];
 
-    return items.map((item) => {
+    // Filter out metadata completed rows
+    const progressItems = items.filter(item => {
+      const sk = item.SK as string;
+      return sk.includes('#LESSON#');
+    });
+
+    return progressItems.map((item) => {
       const sk = item.SK as string;
       const lessonId = this.extractLessonId(sk);
       return {
@@ -66,6 +72,41 @@ export class ProgressRepository {
         updatedAt: item.updatedAt as string | undefined,
       };
     });
+  }
+
+  async isCourseCompleted(userId: string, courseId: string): Promise<boolean> {
+    const pk = `USER#${userId}`;
+    const sk = `COURSE#${courseId}#COMPLETED`;
+
+    const command = new GetCommand({
+      TableName: tableName,
+      Key: {
+        PK: pk,
+        SK: sk,
+      },
+    });
+
+    const response = await docClient.send(command);
+    return !!response.Item;
+  }
+
+  async markCourseCompleted(userId: string, courseId: string): Promise<void> {
+    const pk = `USER#${userId}`;
+    const sk = `COURSE#${courseId}#COMPLETED`;
+    const now = new Date().toISOString();
+
+    const command = new PutCommand({
+      TableName: tableName,
+      Item: {
+        PK: pk,
+        SK: sk,
+        completed: true,
+        completedAt: now,
+        updatedAt: now,
+      },
+    });
+
+    await docClient.send(command);
   }
 
   private extractLessonId(sk: string): string {

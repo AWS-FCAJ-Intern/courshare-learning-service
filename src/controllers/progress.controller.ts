@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { validate } from 'class-validator';
 import { plainToInstance } from 'class-transformer';
-import { ProgressService, NotFoundError } from '../services/progress.service';
+import { ProgressService, NotFoundError, ConflictError } from '../services/progress.service';
 import { ProgressUpsertDto } from '../dtos/progress-upsert.dto';
 
 export class ProgressController {
@@ -46,6 +46,46 @@ export class ProgressController {
     }
   };
 
+  completeLesson = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const userId = req.headers['x-user-id'] as string;
+      this.validateUserId(userId);
+
+      const { lessonId } = req.params;
+      if (!lessonId || lessonId.trim() === '') {
+        const error = new Error('Required path parameter "lessonId" is missing or empty');
+        (error as any).status = 400;
+        (error as any).errorName = 'Invalid Lesson ID';
+        throw error;
+      }
+
+      const result = await this.progressService.completeLesson(userId, lessonId);
+      return res.status(200).json(result);
+    } catch (err) {
+      this.handleError(err, res, next);
+    }
+  };
+
+  completeCourse = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const userId = req.headers['x-user-id'] as string;
+      this.validateUserId(userId);
+
+      const { courseId } = req.params;
+      if (!courseId || courseId.trim() === '') {
+        const error = new Error('Required path parameter "courseId" is missing or empty');
+        (error as any).status = 400;
+        (error as any).errorName = 'Invalid Course ID';
+        throw error;
+      }
+
+      const result = await this.progressService.completeCourse(userId, courseId);
+      return res.status(200).json(result);
+    } catch (err) {
+      this.handleError(err, res, next);
+    }
+  };
+
   private validateUserId(userId: string): void {
     if (!userId || userId.trim() === '') {
       const error = new Error('Required request header "x-user-id" is missing or empty');
@@ -61,6 +101,11 @@ export class ProgressController {
         status: 404,
         error: 'Resource Not Found',
         details: [err.message],
+      });
+    }
+    if (err instanceof ConflictError) {
+      return res.status(409).json({
+        message: err.message,
       });
     }
     if (err.status === 400) {

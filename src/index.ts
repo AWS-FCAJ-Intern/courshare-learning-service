@@ -210,6 +210,102 @@ const swaggerDocument = {
         },
       },
     },
+    '/lessons/{lessonId}/complete': {
+      post: {
+        summary: 'Mark a lesson as completed',
+        description: 'Marks a lesson as 100% completed. This is an idempotent operation.',
+        parameters: [
+          {
+            name: 'x-user-id',
+            in: 'header',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Authenticated User ID injected by API Gateway',
+          },
+          {
+            name: 'lessonId',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'ID of the lesson to complete',
+          },
+        ],
+        responses: {
+          200: {
+            description: 'Lesson successfully marked completed',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    lessonId: { type: 'string', example: 'lesson-1' },
+                    completed: { type: 'boolean', example: true },
+                    percentage: { type: 'integer', example: 100 },
+                  },
+                },
+              },
+            },
+          },
+          400: { description: 'Missing user header or path parameter' },
+          404: { description: 'Lesson metadata not found' },
+          500: { description: 'Internal server error' },
+        },
+      },
+    },
+    '/courses/{courseId}/complete': {
+      post: {
+        summary: 'Verify and record course completion',
+        description: 'Verifies if course progress is 100%. Marks the course completed and publishes CourseCompletedEvent. Idempotent.',
+        parameters: [
+          {
+            name: 'x-user-id',
+            in: 'header',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Authenticated User ID injected by API Gateway',
+          },
+          {
+            name: 'courseId',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'ID of the course to complete',
+          },
+        ],
+        responses: {
+          200: {
+            description: 'Course successfully completed',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    courseId: { type: 'string', example: 'course-1' },
+                    completed: { type: 'boolean', example: true },
+                  },
+                },
+              },
+            },
+          },
+          400: { description: 'Missing user header' },
+          404: { description: 'Course metadata not found' },
+          409: {
+            description: 'Course is not yet completed',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    message: { type: 'string', example: 'Course is not yet completed.' },
+                  },
+                },
+              },
+            },
+          },
+          500: { description: 'Internal server error' },
+        },
+      },
+    },
   },
 };
 

@@ -2,6 +2,8 @@ import { ProgressRepository } from '../repositories/progress.repository';
 import { CourseServiceClient } from './course-service.client';
 import { CourseProgressDto } from '../dtos/course-progress.dto';
 import { LearningSessionDto } from '../dtos/learning-session.dto';
+import { EventPublisher } from '../publishers/event.publisher';
+import { MockEventPublisher } from '../publishers/mock-event.publisher';
 
 export class NotFoundError extends Error {
   constructor(message: string) {
@@ -10,10 +12,18 @@ export class NotFoundError extends Error {
   }
 }
 
+export class ConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConflictError';
+  }
+}
+
 export class ProgressService {
   constructor(
     private readonly progressRepository: ProgressRepository,
     private readonly courseServiceClient: CourseServiceClient,
+    private readonly eventPublisher: EventPublisher = new MockEventPublisher(),
   ) {}
 
   async upsertProgress(
@@ -133,5 +143,110 @@ export class ProgressService {
       completed: target.completed,
       lastUpdated: target.updatedAt,
     };
+  }
+
+  async completeLesson(
+    userId: string,
+    lessonId: string,
+  ): Promise<{ lessonId: string; completed: boolean; percentage: number }> {
+    const courseId = await this.courseServiceClient.getCourseIdForLesson(lessonId);
+    if (!courseId) {
+      throw new NotFoundError(`Lesson metadata not found for lesson ID: ${lessonId}`);
+    }
+
+    // 1. Mark lesson as completed
+    await this.progressRepository.upsertProgress(userId, courseId, lessonId, 100, true);
+
+    // 2. Evaluate course completion (publish event automatically if completed)
+    await this.checkAndPublishCourseCompletion(userId, courseId);
+
+    return {
+      lessonId,
+      completed: true,
+      percentage: 100,
+    };
+  }
+
+  async completeCourse(
+    userId: string,
+    courseId: string,
+  ): Promise<{ courseId: string; completed: boolean }> {
+    const allLessonIds = await this.courseServiceClient.getLessonIdsForCourse(courseId);
+    if (!allLessonIds || allLessonIds.length === 0) {
+      throw new NotFoundError(`Course metadata not found or course has no lessons: ${courseId}`);
+    }
+
+    const dbProgressList = await this.progressRepository.getCourseProgress(userId, courseId);
+    const validProgressList = dbProgressList.filter((progress) =>
+      allLessonIds.includes(progress.lessonId),
+    );
+
+    const progressMap = new Map<string, number>();
+    const completedMap = new Map<string, boolean>();
+    validProgressList.forEach((p) => {
+      progressMap.set(p.lessonId, p.percentage);
+      completedMap.set(p.lessonId, p.completed);
+    });
+
+    const isAllLessonsFinished = allLessonIds.every(
+      (lessonId) => progressMap.get(lessonId) === 100 && completedMap.get(lessonId) === true,
+    );
+
+    if (!isAllLessonsFinished) {
+      throw new ConflictError('Course is not yet completed.');
+    }
+
+    // Trigger course completion event and update DB (if not already completed)
+    await this.triggerCourseCompletion(userId, courseId);
+
+    return {
+      courseId,
+      completed: true,
+    };
+  }
+
+  private async checkAndPublishCourseCompletion(userId: string, courseId: string): Promise<void> {
+    const allLessonIds = await this.courseServiceClient.getLessonIdsForCourse(courseId);
+    if (!allLessonIds || allLessonIds.length === 0) {
+      return;
+    }
+
+    const dbProgressList = await this.progressRepository.getCourseProgress(userId, courseId);
+    const validProgressList = dbProgressList.filter((progress) =>
+      allLessonIds.includes(progress.lessonId),
+    );
+
+    const progressMap = new Map<string, number>();
+    const completedMap = new Map<string, boolean>();
+    validProgressList.forEach((p) => {
+      progressMap.set(p.lessonId, p.percentage);
+      completedMap.set(p.lessonId, p.completed);
+    });
+
+    const isAllLessonsFinished = allLessonIds.every(
+      (lessonId) => progressMap.get(lessonId) === 100 && completedMap.get(lessonId) === true,
+    );
+
+    if (isAllLessonsFinished) {
+      await this.triggerCourseCompletion(userId, courseId);
+    }
+  }
+
+  private async triggerCourseCompletion(userId: string, courseId: string): Promise<void> {
+    const isAlreadyCompleted = await this.progressRepository.isCourseCompleted(userId, courseId);
+    if (isAlreadyCompleted) {
+      return; // Already completed (Idempotent bypass)
+    }
+
+    // 1. Write course completion status
+    await this.progressRepository.markCourseCompleted(userId, courseId);
+
+    // 2. Publish Domain event
+    await this.eventPublisher.publishCourseCompleted({
+      eventType: 'COURSE_COMPLETED',
+      courseId,
+      userId,
+      completedAt: new Date().toISOString(),
+    });
   }
 }
